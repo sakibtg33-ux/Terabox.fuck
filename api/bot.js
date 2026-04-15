@@ -6,16 +6,21 @@ const API_KEY = process.env.API_KEY;
 export default async function handler(req, res) {
 
     if (req.method !== "POST") {
-        return res.status(200).send("Bot is running...");
+        return res.status(200).send("Bot running...");
     }
 
     const body = req.body;
-    const msg = body.message;
 
-    const chatId = msg?.chat?.id;
-    const text = msg?.text;
+    const message = body.message || body.edited_message;
 
-    async function sendMessage(textMsg) {
+    if (!message) {
+        return res.status(200).send("No message");
+    }
+
+    const chatId = message.chat.id;
+    const text = message.text;
+
+    async function send(textMsg) {
         await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
             chat_id: chatId,
             text: textMsg
@@ -23,12 +28,13 @@ export default async function handler(req, res) {
     }
 
     try {
+
         if (!text || !text.includes("terabox")) {
-            await sendMessage("❌ Send valid Terabox link");
+            await send("❌ Send Terabox link");
             return res.status(200).send("ok");
         }
 
-        await sendMessage("⏳ Processing...");
+        await send("⏳ Processing...");
 
         const apiRes = await axios.post(
             "https://xapiverse.com/api/terabox",
@@ -41,32 +47,30 @@ export default async function handler(req, res) {
             }
         );
 
-        if (!apiRes.data || !apiRes.data.list || apiRes.data.list.length === 0) {
-            await sendMessage("❌ No file found");
+        if (!apiRes.data?.list?.length) {
+            await send("❌ No file found");
             return res.status(200).send("ok");
         }
 
         const file = apiRes.data.list[0];
 
-        const download = file.normal_dlink;
-        const fast480 = file.fast_stream_url?.["480p"];
+        let msgText = `📁 ${file.name}\n📦 ${file.size_formatted}\n\n`;
 
-        let reply = `📁 ${file.name}\n📦 ${file.size_formatted}\n\n`;
-
-        if (download) {
-            reply += `⬇️ Download:\n${download}\n\n`;
+        if (file.normal_dlink) {
+            msgText += `⬇️ Download:\n${file.normal_dlink}\n\n`;
         }
 
-        if (fast480) {
-            reply += `⚡ Stream (480p):\n${fast480}`;
+        if (file.fast_stream_url?.["480p"]) {
+            msgText += `⚡ Stream:\n${file.fast_stream_url["480p"]}`;
         }
 
-        await sendMessage(reply);
+        await send(msgText);
 
         return res.status(200).send("ok");
 
     } catch (err) {
-        await sendMessage("❌ Error: " + (err.response?.data?.message || err.message));
+        console.log(err.response?.data || err.message);
+        await send("❌ Failed: " + (err.message));
         return res.status(200).send("error");
     }
 }
