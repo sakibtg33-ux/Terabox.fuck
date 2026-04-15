@@ -1,11 +1,15 @@
 import asyncio
 import json
 import aiohttp
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-API_KEY = "YOUR_API_KEY"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_KEY = os.getenv("API_KEY")
+
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN not set!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -28,7 +32,7 @@ async def main(msg: types.Message):
     text = msg.text
 
     if not text or "terabox" not in text:
-        return await msg.answer("❌ Send valid link")
+        return await msg.answer("❌ Send valid Terabox link")
 
     await msg.answer("⏳ Processing...")
 
@@ -44,8 +48,7 @@ async def main(msg: types.Message):
                 headers={
                     "Content-Type": "application/json",
                     "xAPIverse-Key": API_KEY
-                },
-                timeout=15
+                }
             ) as res:
                 data = await res.json()
 
@@ -61,7 +64,7 @@ async def main(msg: types.Message):
 
             keyboard.append([
                 types.InlineKeyboardButton(
-                    text=file.get("name"),
+                    text=f"{file.get('name')} ({file.get('size_formatted')})",
                     callback_data=json.dumps({
                         "name": file.get("name"),
                         "size": file.get("size_formatted"),
@@ -82,13 +85,16 @@ async def main(msg: types.Message):
 async def click(call: types.CallbackQuery):
     data = json.loads(call.data)
 
-    text = f"🎥 {data['name']}\n📦 {data['size']}\n\n⬇️ {data['url']}"
+    text = (
+        f"🎥 {data['name']}\n"
+        f"📦 {data['size']}\n\n"
+        f"⬇️ {data['url']}"
+    )
 
     await call.message.answer(text)
     await call.answer()
 
 
-# ===== AUTO RESTART LOOP =====
 async def main_run():
     while True:
         try:
@@ -96,7 +102,7 @@ async def main_run():
             await dp.start_polling(bot)
         except Exception as e:
             print("❌ Crash:", e)
-            await asyncio.sleep(5)  # wait and restart
+            await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
