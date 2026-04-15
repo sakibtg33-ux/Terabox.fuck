@@ -4,12 +4,10 @@ import aiohttp
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiohttp import web
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_KEY = os.getenv("API_KEY")
-
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN not set!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -32,7 +30,7 @@ async def main(msg: types.Message):
     text = msg.text
 
     if not text or "terabox" not in text:
-        return await msg.answer("❌ Send valid Terabox link")
+        return await msg.answer("❌ Send valid link")
 
     await msg.answer("⏳ Processing...")
 
@@ -64,7 +62,7 @@ async def main(msg: types.Message):
 
             keyboard.append([
                 types.InlineKeyboardButton(
-                    text=f"{file.get('name')} ({file.get('size_formatted')})",
+                    text=file.get("name"),
                     callback_data=json.dumps({
                         "name": file.get("name"),
                         "size": file.get("size_formatted"),
@@ -85,24 +83,30 @@ async def main(msg: types.Message):
 async def click(call: types.CallbackQuery):
     data = json.loads(call.data)
 
-    text = (
-        f"🎥 {data['name']}\n"
-        f"📦 {data['size']}\n\n"
-        f"⬇️ {data['url']}"
-    )
+    text = f"🎥 {data['name']}\n📦 {data['size']}\n\n⬇️ {data['url']}"
 
     await call.message.answer(text)
     await call.answer()
 
 
+# ===== FAKE WEB SERVER =====
+async def handle(request):
+    return web.Response(text="Bot is running")
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+
+# ===== MAIN =====
 async def main_run():
-    while True:
-        try:
-            print("🚀 Bot running...")
-            await dp.start_polling(bot)
-        except Exception as e:
-            print("❌ Crash:", e)
-            await asyncio.sleep(5)
+    await start_web()
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
