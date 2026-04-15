@@ -1,28 +1,22 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 
-// ===== ENV =====
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const API_KEY = process.env.API_KEY;
 
-// ===== BOT =====
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
-    // only terabox link
     if (!text || !text.includes("terabox")) {
-        return bot.sendMessage(chatId, "❌ Send a valid Terabox link");
+        return bot.sendMessage(chatId, "Send valid Terabox link");
     }
 
-    await bot.sendMessage(chatId, "⏳ Processing...");
+    await bot.sendMessage(chatId, "Processing...");
 
     try {
-        // ===== API CALL =====
         const res = await axios.post(
             "https://xapiverse.com/api/terabox",
             { url: text },
@@ -34,7 +28,14 @@ bot.on('message', async (msg) => {
             }
         );
 
-        // ===== VALIDATION =====
+        // 👇 send full response for debug
+        await bot.sendMessage(chatId, JSON.stringify(res.data, null, 2));
+
+    } catch (err) {
+        // 👇 show real error
+        await bot.sendMessage(chatId, "ERROR:\n" + (err.response?.data?.message || err.message));
+    }
+});        // ===== VALIDATION =====
         if (!res.data || !res.data.list || res.data.list.length === 0) {
             return bot.sendMessage(chatId, "❌ No file found!");
         }
