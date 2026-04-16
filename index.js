@@ -1,23 +1,30 @@
 import TelegramBot from "node-telegram-bot-api";
-import fetch from "node-fetch";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(process.env.BOT_TOKEN, {
+  polling: true
+});
 
+console.log("🤖 Bot started...");
+
+// Message handler
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
+  if (!text) return;
+
+  // Only terabox link
   if (!text.includes("terabox")) {
-    return bot.sendMessage(chatId, "❌ Send valid TeraBox link");
+    return bot.sendMessage(chatId, "❌ Send a valid TeraBox link");
   }
 
   bot.sendMessage(chatId, "⏳ Processing...");
 
   try {
-    const res = await fetch("https://xapiverse.com/api/terabox-pro", {
+    const res = await fetch("https://xapiverse.com/api/terabox", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -28,12 +35,28 @@ bot.on("message", async (msg) => {
 
     const data = await res.json();
 
-    if (!data?.data?.download_url) {
-      return bot.sendMessage(chatId, "❌ Failed to get link");
+    console.log("API RESPONSE:", data);
+
+    // Check success
+    if (!res.ok) {
+      return bot.sendMessage(chatId, "❌ API Error:\n" + JSON.stringify(data));
     }
 
-    bot.sendMessage(chatId, `✅ Download:\n${data.data.download_url}`);
+    // Extract link safely
+    const link =
+      data?.data?.download_url ||
+      data?.data?.url ||
+      data?.download_url;
+
+    if (!link) {
+      return bot.sendMessage(chatId, "❌ No download link found");
+    }
+
+    bot.sendMessage(chatId, `✅ Download Link:\n${link}`);
   } catch (err) {
-    bot.sendMessage(chatId, "❌ Error occurred");
+    console.error(err);
+    bot.sendMessage(chatId, "❌ Server Error");
+  }
+});    bot.sendMessage(chatId, "❌ Error occurred");
   }
 });
