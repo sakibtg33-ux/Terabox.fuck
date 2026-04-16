@@ -1,8 +1,6 @@
 import os
 import logging
-import asyncio
 import requests
-from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -12,20 +10,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask অ্যাপ
-flask_app = Flask(__name__)
-
 # এনভায়রনমেন্ট ভেরিয়েবল
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 XAPIVERSE_KEY = os.environ.get("XAPIVERSE_KEY")
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
-API_URL = "https://xapiverse.com/api/terabox"
+PORT = int(os.environ.get("PORT", 10000))
 
 if not TELEGRAM_TOKEN or not XAPIVERSE_KEY:
     raise ValueError("TELEGRAM_TOKEN and XAPIVERSE_KEY must be set.")
 
-# Telegram Bot Application
-app = Application.builder().token(TELEGRAM_TOKEN).build()
+API_URL = "https://xapiverse.com/api/terabox"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -73,45 +67,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await processing_msg.delete()
         await update.message.reply_text(f"⚠️ এরর: {str(e)[:200]}")
 
-# হ্যান্ডলার রেজিস্টার
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+def main():
+    # অ্যাপ্লিকেশন তৈরি
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Flask রুট
-@flask_app.route('/')
-def home():
-    return "Bot is running!"
+    # হ্যান্ডলার রেজিস্টার
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-@flask_app.route('/webhook', methods=['POST'])
-def webhook():
-    """Telegram থেকে আসা আপডেট প্রসেস করা"""
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), app.bot)
-        # async update queue-এ ঠিকভাবে পাঠানো (thread-safe)
-        asyncio.run_coroutine_threadsafe(
-            app.update_queue.put(update),
-            app._update_loop  # এটি app-এর ইভেন্ট লুপ
-        )
-        return "ok"
-
-# Webhook সেটআপ
-async def setup_webhook():
+    # Webhook URL
     webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
-    await app.bot.set_webhook(url=webhook_url)
-    logger.info(f"Webhook set to {webhook_url}")
+    logger.info(f"Setting webhook to {webhook_url}")
 
-# অ্যাপ্লিকেশন স্টার্ট
+    # Webhook সার্ভার চালু (Render-এ HTTP পোর্ট 0.0.0.0:PORT)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="webhook",          # টেলিগ্রাম যেখানে পোস্ট করবে
+        webhook_url=webhook_url,
+        drop_pending_updates=True    # পূর্বের জমে থাকা আপডেট বাদ দাও
+    )
+
 if __name__ == "__main__":
-    # প্রথমে webhook সেটআপ
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(setup_webhook())
-    
-    # Flask সার্ভার শুরু করার আগে ব্যাকগ্রাউন্ডে অ্যাপ্লিকেশন রান করা
-    # python-telegram-bot-এর update processing চালু করতে হবে
-    import threading
-    threading.Thread(target=lambda: loop.run_forever(), daemon=True).start()
-    threading.Thread(target=lambda: app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True), daemon=True).start()
-    
-    # Flask চালু
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    main()
