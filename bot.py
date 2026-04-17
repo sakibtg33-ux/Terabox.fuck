@@ -34,7 +34,6 @@ logger.info(f"Port: {PORT}")
 
 API_URL = "https://xapiverse.com/api/terabox"
 
-# Telegram হ্যান্ডলার
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 TeraBox লিংক পাঠান।")
 
@@ -69,18 +68,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         file_info = data["list"][0]
-        reply = f"📁 **{file_info.get('name', 'Unknown')}**\n"
-        reply += f"📦 সাইজ: {file_info.get('size_formatted', 'N/A')}\n"
-        if file_info.get("duration"):
-            reply += f"⏱️ সময়: {file_info['duration']}\n"
-        if file_info.get("quality"):
-            reply += f"🎥 কোয়ালিটি: {file_info['quality']}\n"
-        if file_info.get("normal_dlink"):
-            reply += f"\n🔗 **ডিরেক্ট ডাউনলোড:**\n`{file_info['normal_dlink']}`\n"
-        if file_info.get("zip_dlink"):
-            reply += f"\n📦 **জিপ ডাউনলোড:**\n`{file_info['zip_dlink']}`\n"
 
-        await update.message.reply_text(reply, parse_mode="Markdown", disable_web_page_preview=True)
+        # HTML এস্কেপিং
+        name = file_info.get('name', 'Unknown').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        size = file_info.get('size_formatted', 'N/A')
+        duration = file_info.get('duration', '')
+        quality = file_info.get('quality', '')
+        normal_link = file_info.get('normal_dlink', '')
+        zip_link = file_info.get('zip_dlink', '')
+
+        reply = f"📁 <b>{name}</b>\n"
+        reply += f"📦 সাইজ: {size}\n"
+        if duration:
+            reply += f"⏱️ সময়: {duration}\n"
+        if quality:
+            reply += f"🎥 কোয়ালিটি: {quality}\n"
+        if normal_link:
+            reply += f"\n🔗 <b>ডিরেক্ট ডাউনলোড:</b>\n<code>{normal_link}</code>\n"
+        if zip_link:
+            reply += f"\n📦 <b>জিপ ডাউনলোড:</b>\n<code>{zip_link}</code>\n"
+
+        await update.message.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
 
     except Exception as e:
         logger.exception("Error in handle_message")
@@ -90,49 +98,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         await update.message.reply_text("⚠️ সিস্টেম ত্রুটি, পরে চেষ্টা করুন।")
 
-# Webhook রিকোয়েস্ট হ্যান্ডলার (aiohttp এর জন্য)
 async def webhook_handler(request):
-    app = request.app['telegram_app']  # আমরা app অবজেক্ট স্টোর করেছি
+    app = request.app['telegram_app']
     data = await request.json()
     update = Update.de_json(data, app.bot)
     await app.update_queue.put(update)
     return web.Response(text="ok")
 
-# স্বাস্থ্য পরীক্ষা
 async def health_check(request):
     return web.Response(text="Bot is running")
 
 async def main():
-    # 1. PTB Application তৈরি
     logger.info("Initializing PTB Application...")
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 2. Webhook URL সেট
     webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
     logger.info(f"Setting webhook: {webhook_url}")
     await app.bot.set_webhook(url=webhook_url)
 
-    # 3. PTB Application শুরু
     await app.initialize()
     await app.start()
     logger.info("PTB Application started.")
 
-    # 4. aiohttp ওয়েব সার্ভার তৈরি
     aiohttp_app = web.Application()
-    aiohttp_app['telegram_app'] = app  # webhook_handler এ ব্যবহারের জন্য
+    aiohttp_app['telegram_app'] = app
     aiohttp_app.router.add_get("/", health_check)
     aiohttp_app.router.add_post("/webhook", webhook_handler)
 
-    # 5. সার্ভার চালু
     runner = web.AppRunner(aiohttp_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
     logger.info(f"Server running on port {PORT}")
 
-    # চিরতরে চলতে থাকা
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
