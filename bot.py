@@ -1,12 +1,14 @@
 import os
 import logging
+import json
 import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# লগিং সেটআপ
+# লগিং কনফিগার
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -28,12 +30,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_text = update.message.text.strip()
+    chat_id = update.effective_chat.id
+
+    logger.info(f"Received message from {chat_id}: {user_text}")
 
     if not ("terabox.com" in user_text or "1024terabox.com" in user_text):
         await update.message.reply_text("❌ দয়া করে বৈধ TeraBox লিংক পাঠান।")
         return
 
     processing_msg = await update.message.reply_text("⏳ লিংক প্রসেস করা হচ্ছে...")
+    logger.info("Sent processing message")
 
     try:
         headers = {
@@ -41,51 +47,96 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "xAPIverse-Key": XAPIVERSE_KEY
         }
         payload = {"url": user_text}
+        logger.info(f"Calling API with URL: {user_text}")
         response = requests.post(API_URL, json=payload, headers=headers, timeout=30)
-        data = response.json()
-        await processing_msg.delete()
+        logger.info(f"API response status: {response.status_code}")
+        # কনসোলে পুরো রেসপন্স প্রিন্ট করি (প্রথম 500 অক্ষর)
+        logger.info(f"API response body: {response.text[:500]}")
 
-        if data.get("status") != "success" or not data.get("list"):
-            await update.message.reply_text("❌ ফাইল ইনফো পাওয়া যায়নি। লিংক চেক করুন।")
+        # প্রসেসিং মেসেজ ডিলিটের চেষ্টা
+        try:
+            await processing_msg.delete()
+        except Exception as del_err:
+            logger.warning(f"Could not delete processing message: {del_err}")
+
+        # রেসপন্স পার্স
+        try:
+            data = response.json()
+        except json.JSONDecodeError:
+            logger.error("Response is not valid JSON")
+            await update.message.reply_text("❌ API থেকে ভুল ফরম্যাটে ডাটা এসেছে।")
             return
 
-        file_info = data["list"][0]
-        reply = f"📁 **{file_info.get('name', 'Unknown')}**\n"
-        reply += f"📦 সাইজ: {file_info.get('size_formatted', 'N/A')}\n"
-        if file_info.get("duration"):
-            reply += f"⏱️ সময়: {file_info['duration']}\n"
-        if file_info.get("quality"):
-            reply += f"🎥 কোয়ালিটি: {file_info['quality']}\n"
-        if file_info.get("normal_dlink"):
-            reply += f"\n🔗 **ডিরেক্ট ডাউনলোড:**\n`{file_info['normal_dlink']}`\n"
-        if file_info.get("zip_dlink"):
-            reply += f"\n📦 **জিপ ডাউনলোড:**\n`{file_info['zip_dlink']}`\n"
+        # চেক করি API success কিনা
+        if data.get("status") != "success":
+            error_msg = data.get("message", "Unknown error")
+            logger.error(f"API returned error: {error_msg}")
+            await update.message.reply_text(f"❌ API এরর: {error_msg}")
+            return
 
-        await update.message.reply_text(reply, parse_mode="Markdown", disable_web_page_preview=True)
+        if not data.get("list") or len(data["list"]) == 0:
+            logger.error("API returned success but list is empty")
+            await update.message.reply_text("❌ ফাইল ইনফো পাওয়া যায়নি।")
+            return
+
+        # প্রথম ফাইল ইনফো
+        file_info = data["list"][0]
+        logger.info(f"File info: {file_info}")
+
+        # মেসেজ তৈরি
+        name = file_info.get('name', 'Unknown')
+        size = file_info.get('size_formatted', 'N/A')
+        duration = file_info.get('duration', '')
+        quality = file_info.get('quality', '')
+        normal_link = file_info.get('normal_dlink', '')
+        zip_link = file_info.get('zip_dlink', '')
+
+        reply = f"📁 **{name}**\n"
+        reply += f"📦 সাইজ: {size}\n"
+        if duration:
+            reply += f"⏱️ সময়: {duration}\n"
+        if quality:
+            reply += f"🎥 কোয়ালিটি: {quality}\n"
+        if normal_link:
+            reply += f"\n🔗 **ডিরেক্ট ডাউনলোড:**\n`{normal_link}`\n"
+        if zip_link:
+            reply += f"\n📦 **জিপ ডাউনলোড:**\n`{zip_link}`\n"
+
+        logger.info(f"Sending reply to {chat_id}")
+        await update.message.reply_text(
+            reply,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        logger.info("Reply sent successfully")
 
     except Exception as e:
-        await processing_msg.delete()
-        await update.message.reply_text(f"⚠️ এরর: {str(e)[:200]}")
+        logger.exception("Unhandled exception in handle_message")
+        # প্রসেসিং মেসেজ ডিলিট চেষ্টা
+        try:
+            await processing_msg.delete()
+        except:
+            pass
+        # ইউজারকে এরর জানানো
+        try:
+            await update.message.reply_text(f"⚠️ সিস্টেম এরর হয়েছে। অনুগ্রহ করে পরে চেষ্টা করুন।")
+        except Exception as send_err:
+            logger.error(f"Even error message could not be sent: {send_err}")
 
 def main():
-    # অ্যাপ্লিকেশন তৈরি
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # হ্যান্ডলার রেজিস্টার
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Webhook URL
     webhook_url = f"{RENDER_EXTERNAL_URL}/webhook"
     logger.info(f"Setting webhook to {webhook_url}")
 
-    # Webhook সার্ভার চালু (Render-এ HTTP পোর্ট 0.0.0.0:PORT)
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path="webhook",          # টেলিগ্রাম যেখানে পোস্ট করবে
+        url_path="webhook",
         webhook_url=webhook_url,
-        drop_pending_updates=True    # পূর্বের জমে থাকা আপডেট বাদ দাও
+        drop_pending_updates=True
     )
 
 if __name__ == "__main__":
