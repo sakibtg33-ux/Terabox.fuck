@@ -45,11 +45,10 @@ TERABOX_DOMAINS = [
     "1024terabox.com", "terabox.com", "terabox.app", "1024tera.com",
     "teraboxshare.com", "teraboxlink.com", "terasharelink.com", "terabox.club",
     "mirrobox.com", "4funbox.com", "nephobox.com", "tibibox.com",
-    "momerybox.com", "terafileshare.com", "terasharefile.com"  # ← নতুন ডোমেইন
+    "momerybox.com", "terafileshare.com", "terasharefile.com"
 ]
 
 def extract_terabox_link(text: str):
-    """টেক্সট থেকে প্রথম TeraBox লিংক বের করবে (যেকোনো ডোমেইন)"""
     domain_pattern = "|".join(TERABOX_DOMAINS)
     pattern = rf'https?://(?:[\w-]+\.)?(?:{domain_pattern})/\S+'
     match = re.search(pattern, text)
@@ -57,7 +56,6 @@ def extract_terabox_link(text: str):
 
 # ================== API কল ==================
 def fetch_file_info(url: str):
-    """API কল করে ফাইল ইনফো রিটার্ন করবে। ব্যর্থ হলে None।"""
     try:
         headers = {
             "Content-Type": "application/json",
@@ -78,18 +76,18 @@ def fetch_file_info(url: str):
         return None
 
 # ================== ইনলাইন কীবোর্ড ==================
-def build_file_keyboard(file_info: dict, index: int):
+def build_main_keyboard(file_info: dict):
     normal = file_info.get("normal_dlink", "")
     zip_link = file_info.get("zip_dlink", "")
     streams = file_info.get("fast_stream_url", {})
 
     buttons = []
-    if normal:
-        buttons.append(InlineKeyboardButton("📥 ডাউনলোড", callback_data=f"dl_{index}"))
+    if normal or streams:
+        buttons.append(InlineKeyboardButton("📥 ডাউনলোড", callback_data="dl_menu"))
     if zip_link:
-        buttons.append(InlineKeyboardButton("📦 জিপ", callback_data=f"zip_{index}"))
+        buttons.append(InlineKeyboardButton("📦 জিপ", callback_data="zip_show"))
     if streams:
-        buttons.append(InlineKeyboardButton("🎬 স্ট্রিম", callback_data=f"stream_{index}"))
+        buttons.append(InlineKeyboardButton("🎬 স্ট্রিম", callback_data="stream_menu"))
 
     return InlineKeyboardMarkup([buttons]) if buttons else None
 
@@ -137,7 +135,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ফাইল ইনফো পাওয়া যায়নি। লিংক চেক করুন অথবা API ক্রেডিট শেষ কিনা দেখুন।")
         return
 
-    # ফাইল ডেটা সেশনে জমা রাখা
     context.user_data["last_file"] = file_info
 
     name = file_info.get('name', 'Unknown').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -148,7 +145,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if file_info.get("quality"):
         text += f"\n🎥 {file_info['quality']}"
 
-    reply_markup = build_file_keyboard(file_info, 0)
+    reply_markup = build_main_keyboard(file_info)
 
     await update.message.reply_text(
         text,
@@ -156,7 +153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# ================== ক্যালব্যাক হ্যান্ডলার (সংশোধিত) ==================
+# ================== ক্যালব্যাক হ্যান্ডলার ==================
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -170,14 +167,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⏳ সেশন শেষ। আবার লিংক পাঠান।")
         return
 
-    parts = data.split("_")
-    if len(parts) < 2:
+    # ---------- মূল মেনুতে ফেরা ----------
+    if data == "back_to_main":
+        name = file_info.get('name', 'Unknown').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        size = file_info.get('size_formatted', 'N/A')
+        text = f"📁 <b>{name}</b>\n📦 {size}"
+        if file_info.get("duration"):
+            text += f"\n⏱️ {file_info['duration']}"
+        if file_info.get("quality"):
+            text += f"\n🎥 {file_info['quality']}"
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=build_main_keyboard(file_info))
         return
-    action = parts[0]
 
-    if action == "dl":
-        await show_download_options(update, context, file_info)
-    elif action == "zip":
+    # ---------- জিপ লিংক দেখানো ----------
+    if data == "zip_show":
         link = file_info.get("zip_dlink")
         if link:
             await query.edit_message_text(
@@ -187,82 +190,89 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text("❌ জিপ লিংক নেই।")
-    elif action == "stream":
+        return
+
+    # ---------- স্ট্রিম মেনু ----------
+    if data == "stream_menu":
         streams = file_info.get("fast_stream_url", {})
         if not streams:
             await query.edit_message_text("❌ স্ট্রিমিং লিংক নেই।")
             return
         keyboard = []
-        for quality, url in streams.items():
-            keyboard.append([InlineKeyboardButton(f"🎬 {quality}", callback_data=f"play_{quality}")])
+        for quality in streams.keys():
+            keyboard.append([InlineKeyboardButton(f"🎬 {quality}", callback_data=f"stream_play_{quality}")])
         keyboard.append([InlineKeyboardButton("🔙 ফিরুন", callback_data="back_to_main")])
         await query.edit_message_text(
             f"🎬 স্ট্রিম কোয়ালিটি বাছুন:\n📁 {file_info.get('name', 'Unknown')}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    elif action == "play":
-        if len(parts) < 2:
-            return
-        quality = parts[1]
+        return
+
+    # ---------- স্ট্রিম প্লে ----------
+    if data.startswith("stream_play_"):
+        quality = data.replace("stream_play_", "")
         streams = file_info.get("fast_stream_url", {})
         url = streams.get(quality)
         if url:
             await query.edit_message_text(
-                f"🎬 {quality} স্ট্রিম লিংক:\n\n<code>{url}</code>",
+                f"🎬 {quality} স্ট্রিম (M3U8):\n\n<code>{url}</code>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ফিরুন", callback_data="back_to_main")]])
             )
         else:
-            await query.edit_message_text("❌ সেই কোয়ালিটি নেই।")
-    elif action == "download":
-        if len(parts) < 2:
-            return
-        quality = parts[1]
+            await query.answer("সেই কোয়ালিটি নেই।")
+        return
+
+    # ---------- ডাউনলোড মেনু (নতুন) ----------
+    if data == "dl_menu":
+        name = file_info.get('name', 'Unknown')
+        keyboard = []
+
+        # সরাসরি ডাউনলোড (normal_dlink)
+        if file_info.get("normal_dlink"):
+            keyboard.append([InlineKeyboardButton("📥 সরাসরি ডাউনলোড (MP4/MKV)", callback_data="dl_direct")])
+
+        # M3U8 স্ট্রিম ডাউনলোড
+        streams = file_info.get("fast_stream_url", {})
+        if streams:
+            for quality in streams.keys():
+                keyboard.append([InlineKeyboardButton(f"🎬 {quality} স্ট্রিম (M3U8)", callback_data=f"dl_m3u8_{quality}")])
+
+        keyboard.append([InlineKeyboardButton("🔙 ফিরুন", callback_data="back_to_main")])
+
+        await query.edit_message_text(
+            f"📥 ডাউনলোড / স্ট্রিম অপশন:\n📁 {name}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    # সরাসরি ডাউনলোড
+    if data == "dl_direct":
+        link = file_info.get("normal_dlink")
+        if link:
+            await query.edit_message_text(
+                f"📥 সরাসরি ডাউনলোড লিংক:\n\n<code>{link}</code>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ফিরুন", callback_data="back_to_main")]])
+            )
+        else:
+            await query.answer("❌ সরাসরি ডাউনলোড লিংক নেই।")
+        return
+
+    # M3U8 স্ট্রিম ডাউনলোড
+    if data.startswith("dl_m3u8_"):
+        quality = data.replace("dl_m3u8_", "")
         streams = file_info.get("fast_stream_url", {})
         url = streams.get(quality)
         if url:
             await query.edit_message_text(
-                f"📥 {quality} ডাউনলোড লিংক:\n\n<code>{url}</code>",
+                f"🎬 {quality} স্ট্রিম (M3U8):\n\n<code>{url}</code>",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 ফিরুন", callback_data="back_to_main")]])
             )
         else:
-            await query.edit_message_text("❌ সেই কোয়ালিটির ডাউনলোড লিংক নেই।")
-    elif action == "back_to_main":
-        # মূল মেনুতে ফিরে যাওয়া
-        name = file_info.get('name', 'Unknown').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        size = file_info.get('size_formatted', 'N/A')
-        text = f"📁 <b>{name}</b>\n📦 {size}"
-        if file_info.get("duration"):
-            text += f"\n⏱️ {file_info['duration']}"
-        if file_info.get("quality"):
-            text += f"\n🎥 {file_info['quality']}"
-        reply_markup = build_file_keyboard(file_info, 0)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
-
-async def show_download_options(update: Update, context, file_info):
-    """ডাউনলোড অপশন (সাধারণ + কোয়ালিটি ভিত্তিক) দেখানো"""
-    query = update.callback_query
-    name = file_info.get('name', 'Unknown')
-    keyboard = []
-
-    # সাধারণ ডাউনলোড লিংক
-    normal_link = file_info.get("normal_dlink")
-    if normal_link:
-        keyboard.append([InlineKeyboardButton("📥 সাধারণ ডাউনলোড", callback_data="dl_normal")])
-
-    # ভিডিও কোয়ালিটি অনুযায়ী ডাউনলোড (যদি থাকে)
-    streams = file_info.get("fast_stream_url", {})
-    if streams:
-        for quality in streams.keys():
-            keyboard.append([InlineKeyboardButton(f"🎬 {quality} ডাউনলোড", callback_data=f"download_{quality}")])
-
-    keyboard.append([InlineKeyboardButton("🔙 ফিরুন", callback_data="back_to_main")])
-
-    await query.edit_message_text(
-        f"📥 ডাউনলোড অপশন নির্বাচন করুন:\n📁 {name}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+            await query.answer("সেই কোয়ালিটি নেই।")
+        return
 
 # ================== ওয়েবহুক ও সার্ভার ==================
 async def webhook_handler(request):
